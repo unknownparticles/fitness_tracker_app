@@ -264,20 +264,16 @@ class DeepSeekService {
   "total_calories": 2500,
   "meals": [
     { "type": "breakfast", "name": "营养早餐", "description": "全麦面包+煎蛋+牛奶+水果", "calories": 500, "time": "07:30" },
-    { "type": "snack", "name": "上午加餐", "description": "酸奶+坚果", "calories": 200, "time": "10:00" },
     { "type": "lunch", "name": "健康午餐", "description": "糙米饭+鸡胸肉+蔬菜沙拉", "calories": 700, "time": "12:30" },
-    { "type": "snack", "name": "下午加餐", "description": "香蕉+花生 butter", "calories": 150, "time": "15:30" },
-    { "type": "dinner", "name": "清淡晚餐", "description": "清蒸鱼+红薯+西兰花", "calories": 600, "time": "18:30" },
-    { "type": "snack", "name": "晚间加餐", "description": "蛋白粉+牛奶", "calories": 350, "time": "21:00" }
+    { "type": "dinner", "name": "清淡晚餐", "description": "清蒸鱼+红薯+西兰花", "calories": 600, "time": "18:30" }
   ],
-  "notes": "总热量2500kcal，蛋白质30%，碳水40%，脂肪30%。加餐可根据个人需求选择性食用。"
+  "notes": "总热量2500kcal，蛋白质30%，碳水40%，脂肪30%。三餐均衡，营养全面。"
 }
 
 注意事项：
 - 早餐必须包含，时间在6:00-9:00之间
 - 午餐必须包含，时间在11:00-14:00之间  
-- 晚餐必须包含，时间在17:00-20:00之间
-- 加餐可选，根据用户需求决定是否包含
+- 晚餐必须包含，时间 in 17:00-20:00之间
 - 总热量根据用户基础代谢和活动量计算
 - 食材要常见易得，做法简单
 ''';
@@ -301,11 +297,11 @@ class DeepSeekService {
               'content': prompt,
             }
           ],
-          'max_tokens': 1500,
+          'max_tokens': 1000,
           'temperature': 0.7,
         }),
       )
-          .timeout(const Duration(seconds: 10));
+          .timeout(const Duration(seconds: 15)); // 增加超时时间到15秒
 
       developer.log('建议食谱 API 响应状态码: ${response.statusCode}', name: 'DeepSeekService');
       developer.log('建议食谱 API 响应内容: ${response.body}', name: 'DeepSeekService');
@@ -333,16 +329,23 @@ class DeepSeekService {
       final data = jsonDecode(response.body);
       final content = data['choices'][0]['message']['content'];
       developer.log('建议食谱 AI 响应内容长度: ${content.length} 字符', name: 'DeepSeekService');
+      developer.log('建议食谱 AI 响应内容: $content', name: 'DeepSeekService');
       
-      // 尝试解析 JSON
+      // 尝试解析 JSON - 更宽松的正则表达式
       final jsonMatch = RegExp(r'\{[\s\S]*\}').firstMatch(content);
       if (jsonMatch == null) {
         developer.log('无法从 AI 响应中解析建议食谱 JSON', name: 'DeepSeekService');
+        developer.log('AI 响应内容: $content', name: 'DeepSeekService');
         throw Exception('AI 返回格式错误，无法解析建议食谱 JSON');
       }
 
       final jsonData = jsonDecode(jsonMatch.group(0)!);
-      developer.log('建议食谱 JSON 解析成功', name: 'DeepSeekService');
+      developer.log('建议食谱 JSON 解析成功: $jsonData', name: 'DeepSeekService');
+      
+      // 验证必要的字段
+      if (!jsonData.containsKey('meals') || (jsonData['meals'] as List).isEmpty) {
+        throw Exception('AI 返回的食谱格式不正确，缺少必要的餐食信息');
+      }
       
       return jsonEncode(jsonData);
     } on SocketException {

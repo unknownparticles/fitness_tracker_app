@@ -29,9 +29,15 @@ class _HomePageState extends State<HomePage> {
   final _snackTimeController = TextEditingController();
   final _trainingFeedbackController = TextEditingController();
 
-  // 建议食谱状态
-  bool _isRecipeExpanded = false;
+  // 建议食谱状态 - 默认展开
+  bool _isRecipeExpanded = true;
   dynamic _suggestedRecipeData;
+  
+  // 其他模块的展开状态
+  bool _isPlanExpanded = true;
+  bool _isDietExpanded = true;
+  bool _isWeightExpanded = true;
+  bool _isFeedbackExpanded = true;
 
   @override
   void initState() {
@@ -115,6 +121,30 @@ class _HomePageState extends State<HomePage> {
       return;
     }
 
+    // 检查是否已有今日计划和建议食谱
+    final existingPlan = _storageService.getPlanJson();
+    final existingRecipe = _storageService.getSuggestedRecipe();
+    
+    // 检查每日建议食谱是否为空，不为空就打印出来
+    if (existingRecipe != null) {
+      developer.log('现有建议食谱内容: $existingRecipe', name: 'HomePage');
+    } else {
+      developer.log('当前无建议食谱数据', name: 'HomePage');
+    }
+    
+    if (existingPlan != null && existingRecipe != null) {
+      developer.log('已有今日计划和建议食谱，显示提示', name: 'HomePage');
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('今日健身计划和建议食谱已存在，如需重新生成请先清空数据'),
+            backgroundColor: Colors.blue,
+          ),
+        );
+      }
+      return;
+    }
+
     final age = DateTime.now().year - birthYear;
     developer.log('计算年龄: $age', name: 'HomePage');
 
@@ -140,7 +170,21 @@ class _HomePageState extends State<HomePage> {
         await _storageService.savePlanChecked(newList);
         
         // 同时生成建议食谱
-        await _generateSuggestedRecipe(height, weight, age, gender);
+        try {
+          await _generateSuggestedRecipe(height, weight, age, gender);
+          developer.log('建议食谱生成成功', name: 'HomePage');
+        } catch (e) {
+          developer.log('建议食谱生成失败: ${e.toString()}', name: 'HomePage');
+          // 食谱生成失败不影响计划生成，只记录日志
+          if (context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('建议食谱生成失败，但健身计划已生成成功'),
+                backgroundColor: Colors.orange,
+              ),
+            );
+          }
+        }
         
         _loadTodayData();
         
@@ -314,6 +358,7 @@ class _HomePageState extends State<HomePage> {
         _checkedList[index] = !_checkedList[index];
       });
       await _storageService.savePlanChecked(_checkedList);
+      developer.log('勾选状态已自动保存', name: 'HomePage');
     }
   }
 
@@ -382,6 +427,9 @@ class _HomePageState extends State<HomePage> {
       return;
     }
 
+    // 自动保存所有饮食记录
+    await _autoSaveAllMeals();
+    
     final planData = jsonDecode(_planJson!);
     final totalItems = planData['items'].length;
     final completedItems = _checkedList.where((checked) => checked).length;
@@ -426,6 +474,8 @@ class _HomePageState extends State<HomePage> {
                 TextButton(
                   onPressed: () {
                     Navigator.of(context).pop();
+                    // 分析完成后清空当天数据
+                    _clearTodayData();
                   },
                   child: const Text('知道了'),
                 ),
@@ -450,6 +500,54 @@ class _HomePageState extends State<HomePage> {
         _isLoading = false;
         developer.log('分析操作完成，重置加载状态', name: 'HomePage');
       });
+    }
+  }
+
+  // 自动保存所有饮食记录
+  Future<void> _autoSaveAllMeals() async {
+    // 保存所有有内容的饮食记录
+    if (_breakfastController.text.trim().isNotEmpty) {
+      await _saveMeal('breakfast', _breakfastController.text.trim());
+    }
+    if (_lunchController.text.trim().isNotEmpty) {
+      await _saveMeal('lunch', _lunchController.text.trim());
+    }
+    if (_dinnerController.text.trim().isNotEmpty) {
+      await _saveMeal('dinner', _dinnerController.text.trim());
+    }
+    if (_snackController.text.trim().isNotEmpty) {
+      await _saveMeal('snack', _snackController.text.trim());
+    }
+    if (_snackTimeController.text.trim().isNotEmpty) {
+      await _saveSnackTime();
+    }
+    
+    developer.log('所有饮食记录已自动保存', name: 'HomePage');
+  }
+
+  // 清空当天数据用于下一次分析
+  Future<void> _clearTodayData() async {
+    try {
+      // 清空计划相关数据
+      await _storageService.savePlanJson('');
+      await _storageService.savePlanChecked([]);
+      
+      // 清空饮食记录
+      await _storageService.saveBreakfast('');
+      await _storageService.saveLunch('');
+      await _storageService.saveDinner('');
+      await _storageService.saveSnack('');
+      await _storageService.saveSnackTime('');
+      
+      // 清空训练感受
+      await _storageService.saveTrainingFeedback('');
+      
+      developer.log('今日数据已清空，准备下一次分析', name: 'HomePage');
+      
+      // 重新加载数据
+      _loadTodayData();
+    } catch (e) {
+      developer.log('清空数据失败: ${e.toString()}', name: 'HomePage');
     }
   }
 
@@ -490,58 +588,66 @@ class _HomePageState extends State<HomePage> {
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
-          : SingleChildScrollView(
-              padding: const EdgeInsets.all(16.0),
-              child: Column(
-                children: [
-                  // 日期显示
-                  Card(
-                    color: Colors.blue[50],
-                    child: Padding(
-                      padding: const EdgeInsets.all(16.0),
-                      child: Center(
-                        child: Text(
-                          dateString,
-                          style: const TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.blue,
+          : Column(
+              children: [
+                // 主要内容区域 - 可滚动
+                Expanded(
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.all(16.0),
+                    child: Column(
+                      children: [
+                        // 日期显示
+                        Card(
+                          color: Colors.blue[50],
+                          child: Padding(
+                            padding: const EdgeInsets.all(16.0),
+                            child: Center(
+                              child: Text(
+                                dateString,
+                                style: const TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.blue,
+                                ),
+                              ),
+                            ),
                           ),
                         ),
-                      ),
+                        const SizedBox(height: 16),
+
+                        // 今日计划区域
+                        planData == null
+                            ? _buildEmptyPlanState()
+                            : _buildPlanListSection(planData),
+                        const SizedBox(height: 16),
+
+                        // 建议食谱区域
+                        _buildSuggestedRecipeSection(),
+                        const SizedBox(height: 16),
+
+                        // 饮食记录区域
+                        _buildDietSection(),
+                        const SizedBox(height: 16),
+
+                        // 今日体重输入
+                        _buildWeightSection(),
+                        const SizedBox(height: 16),
+
+                        // 训练感受输入
+                        _buildTrainingFeedbackSection(),
+                        const SizedBox(height: 16),
+                      ],
                     ),
                   ),
-                  const SizedBox(height: 16),
-
-                  // 今日计划区域
-                  planData == null
-                      ? _buildEmptyPlanState()
-                      : _buildPlanList(planData),
-                  const SizedBox(height: 16),
-
-                  // 建议食谱区域
-                  _buildSuggestedRecipeSection(),
-                  const SizedBox(height: 16),
-
-                  // 饮食记录区域
-                  _buildDietSection(),
-                  const SizedBox(height: 16),
-
-                  // 今日体重输入
-                  _buildWeightSection(),
-                  const SizedBox(height: 16),
-
-                  // 训练感受输入
-                  _buildTrainingFeedbackSection(),
-                  const SizedBox(height: 16),
-
-                  // 底部按钮
-                  _buildActionButtons(),
-                ],
-              ),
+                ),
+                
+                // 底部固定操作区域
+                _buildActionButtons(),
+              ],
             ),
     );
   }
+
 
   Widget _buildDietSection() {
     return Card(
@@ -551,65 +657,84 @@ class _HomePageState extends State<HomePage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Row(
-              children: [
-                Icon(Icons.restaurant, color: Colors.green),
-                SizedBox(width: 8),
-                Text(
-                  '饮食记录',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.green,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-
-            // 早餐
-            _buildMealInput('早餐', '例如：面包+鸡蛋+牛奶', _breakfastController, 'breakfast'),
-
-            // 午餐
-            _buildMealInput('午餐', '例如：米饭+鸡肉+蔬菜', _lunchController, 'lunch'),
-
-            // 晚餐
-            _buildMealInput('晚餐', '例如：面条+鱼肉+沙拉', _dinnerController, 'dinner'),
-
-            // 加餐
-            _buildMealInput('加餐', '例如：水果+坚果', _snackController, 'snack'),
-
-            // 加餐时间
-            const SizedBox(height: 8),
-            const Text(
-              '加餐时间',
-              style: TextStyle(fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 4),
+            // 标题和展开/收起按钮
             Row(
               children: [
+                const Icon(Icons.restaurant, color: Colors.green),
+                const SizedBox(width: 8),
                 Expanded(
-                  child: TextField(
-                    controller: _snackTimeController,
-                    decoration: const InputDecoration(
-                      hintText: '例如：15:30',
-                      prefixIcon: Icon(Icons.access_time),
+                  child: Text(
+                    '饮食记录',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.green,
                     ),
-                    keyboardType: TextInputType.datetime,
                   ),
                 ),
-                const SizedBox(width: 8),
-                ElevatedButton(
-                  onPressed: _saveSnackTime,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.orange,
-                    foregroundColor: Colors.white,
-                    padding: EdgeInsets.symmetric(horizontal: 16),
+                IconButton(
+                  icon: Icon(
+                    _isDietExpanded ? Icons.expand_less : Icons.expand_more,
+                    color: Colors.green,
                   ),
-                  child: const Text('保存'),
+                  onPressed: () {
+                    setState(() {
+                      _isDietExpanded = !_isDietExpanded;
+                    });
+                  },
                 ),
               ],
             ),
+            const SizedBox(height: 8),
+
+            // 展开状态下显示饮食记录内容
+            if (_isDietExpanded) ...[
+              const SizedBox(height: 12),
+
+              // 早餐
+              _buildMealInput('早餐', '例如：面包+鸡蛋+牛奶', _breakfastController, 'breakfast'),
+
+              // 午餐
+              _buildMealInput('午餐', '例如：米饭+鸡肉+蔬菜', _lunchController, 'lunch'),
+
+              // 晚餐
+              _buildMealInput('晚餐', '例如：面条+鱼肉+沙拉', _dinnerController, 'dinner'),
+
+              // 加餐
+              _buildMealInput('加餐', '例如：水果+坚果', _snackController, 'snack'),
+
+              // 加餐时间
+              const SizedBox(height: 8),
+              const Text(
+                '加餐时间',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 4),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _snackTimeController,
+                      decoration: const InputDecoration(
+                        hintText: '例如：15:30',
+                        prefixIcon: Icon(Icons.access_time),
+                      ),
+                      keyboardType: TextInputType.datetime,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  ElevatedButton(
+                    onPressed: _saveSnackTime,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.orange,
+                      foregroundColor: Colors.white,
+                      padding: EdgeInsets.symmetric(horizontal: 16),
+                    ),
+                    child: const Text('保存'),
+                  ),
+                ],
+              ),
+            ],
           ],
         ),
       ),
@@ -675,51 +800,70 @@ class _HomePageState extends State<HomePage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Row(
-              children: [
-                Icon(Icons.scale, color: Colors.purple),
-                SizedBox(width: 8),
-                Text(
-                  '体重记录',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.purple,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
+            // 标题和展开/收起按钮
             Row(
               children: [
-                const Text(
-                  '今日体重',
-                  style: TextStyle(fontWeight: FontWeight.bold),
-                ),
+                const Icon(Icons.scale, color: Colors.purple),
                 const SizedBox(width: 8),
                 Expanded(
-                  child: TextField(
-                    controller: _weightController,
-                    decoration: const InputDecoration(
-                      hintText: '输入体重(kg)',
-                      suffixText: 'kg',
-                      prefixIcon: Icon(Icons.monitor_weight),
+                  child: Text(
+                    '体重记录',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.purple,
                     ),
-                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
                   ),
                 ),
-                const SizedBox(width: 8),
-                ElevatedButton(
-                  onPressed: _saveTodayWeight,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.purple,
-                    foregroundColor: Colors.white,
-                    padding: EdgeInsets.symmetric(horizontal: 16),
+                IconButton(
+                  icon: Icon(
+                    _isWeightExpanded ? Icons.expand_less : Icons.expand_more,
+                    color: Colors.purple,
                   ),
-                  child: const Text('保存'),
+                  onPressed: () {
+                    setState(() {
+                      _isWeightExpanded = !_isWeightExpanded;
+                    });
+                  },
                 ),
               ],
             ),
+            const SizedBox(height: 8),
+
+            // 展开状态下显示体重记录内容
+            if (_isWeightExpanded) ...[
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  const Text(
+                    '今日体重',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: TextField(
+                      controller: _weightController,
+                      decoration: const InputDecoration(
+                        hintText: '输入体重(kg)',
+                        suffixText: 'kg',
+                        prefixIcon: Icon(Icons.monitor_weight),
+                      ),
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  ElevatedButton(
+                    onPressed: _saveTodayWeight,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.purple,
+                      foregroundColor: Colors.white,
+                      padding: EdgeInsets.symmetric(horizontal: 16),
+                    ),
+                    child: const Text('保存'),
+                  ),
+                ],
+              ),
+            ],
           ],
         ),
       ),
@@ -797,6 +941,109 @@ class _HomePageState extends State<HomePage> {
             style: TextStyle(fontSize: 14, color: Colors.grey),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildPlanListSection(Map<String, dynamic> planData) {
+    final items = planData['items'] as List;
+    final totalMinutes = planData['total_minutes'] ?? 0;
+
+    return Card(
+      color: Colors.blue[50],
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // 标题和展开/收起按钮
+            Row(
+              children: [
+                const Icon(Icons.fitness_center, color: Colors.blue),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    '今日健身计划',
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.blue,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  icon: Icon(
+                    _isPlanExpanded ? Icons.expand_less : Icons.expand_more,
+                    color: Colors.blue,
+                  ),
+                  onPressed: () {
+                    setState(() {
+                      _isPlanExpanded = !_isPlanExpanded;
+                    });
+                  },
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+
+            // 展开状态下显示计划内容
+            if (_isPlanExpanded) ...[
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  const Icon(Icons.schedule, color: Colors.blue),
+                  const SizedBox(width: 8),
+                  Text(
+                    '总时长: ${totalMinutes}分钟',
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              ListView.builder(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                itemCount: items.length,
+                itemBuilder: (context, index) {
+                  if (index >= _checkedList.length) {
+                    _checkedList.add(false);
+                  }
+
+                  final item = items[index];
+                  final title = item['title'] ?? '';
+                  final minutes = item['minutes'] ?? 0;
+                  final note = item['note'] ?? '';
+
+                  return Card(
+                    margin: const EdgeInsets.symmetric(vertical: 4),
+                    child: CheckboxListTile(
+                      value: _checkedList[index],
+                      onChanged: (bool? value) {
+                        _toggleCheck(index);
+                      },
+                      title: Text(
+                        title,
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      subtitle: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('$minutes 分钟'),
+                          if (note.isNotEmpty) Text(note, style: const TextStyle(fontSize: 12)),
+                        ],
+                      ),
+                      secondary: Text('$minutes分钟'),
+                      controlAffinity: ListTileControlAffinity.leading,
+                    ),
+                  );
+                },
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }
@@ -964,58 +1211,77 @@ class _HomePageState extends State<HomePage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Row(
-              children: [
-                Icon(Icons.feedback, color: Colors.red),
-                SizedBox(width: 8),
-                Text(
-                  '训练感受',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.red,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            const Text(
-              '完成训练后，请分享你的感受（100字以内）',
-              style: TextStyle(fontSize: 12, color: Colors.red),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _trainingFeedbackController,
-              decoration: const InputDecoration(
-                hintText: '例如：今天感觉很充实，动作都完成了，就是俯卧撑有点吃力，下次可以减少组数',
-                prefixIcon: Icon(Icons.edit_note),
-                border: OutlineInputBorder(),
-                contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              ),
-              maxLines: 3,
-              maxLength: 100,
-              keyboardType: TextInputType.multiline,
-            ),
-            const SizedBox(height: 8),
+            // 标题和展开/收起按钮
             Row(
               children: [
-                const Spacer(),
-                Text(
-                  '${_trainingFeedbackController.text.length}/100',
-                  style: const TextStyle(fontSize: 12, color: Colors.grey),
+                const Icon(Icons.feedback, color: Colors.red),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    '训练感受',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.red,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  icon: Icon(
+                    _isFeedbackExpanded ? Icons.expand_less : Icons.expand_more,
+                    color: Colors.red,
+                  ),
+                  onPressed: () {
+                    setState(() {
+                      _isFeedbackExpanded = !_isFeedbackExpanded;
+                    });
+                  },
                 ),
               ],
             ),
-            const SizedBox(height: 12),
-            ElevatedButton(
-              onPressed: _saveTrainingFeedback,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.red,
-                foregroundColor: Colors.white,
-                padding: EdgeInsets.symmetric(horizontal: 16),
+            const SizedBox(height: 8),
+
+            // 展开状态下显示训练感受内容
+            if (_isFeedbackExpanded) ...[
+              const SizedBox(height: 12),
+              const Text(
+                '完成训练后，请分享你的感受（100字以内）',
+                style: TextStyle(fontSize: 12, color: Colors.red),
               ),
-              child: const Text('保存感受'),
-            ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _trainingFeedbackController,
+                decoration: const InputDecoration(
+                  hintText: '例如：今天感觉很充实，动作都完成了，就是俯卧撑有点吃力，下次可以减少组数',
+                  prefixIcon: Icon(Icons.edit_note),
+                  border: OutlineInputBorder(),
+                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                ),
+                maxLines: 3,
+                maxLength: 100,
+                keyboardType: TextInputType.multiline,
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  const Spacer(),
+                  Text(
+                    '${_trainingFeedbackController.text.length}/100',
+                    style: const TextStyle(fontSize: 12, color: Colors.grey),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              ElevatedButton(
+                onPressed: _saveTrainingFeedback,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.red,
+                  foregroundColor: Colors.white,
+                  padding: EdgeInsets.symmetric(horizontal: 16),
+                ),
+                child: const Text('保存感受'),
+              ),
+            ],
           ],
         ),
       ),
