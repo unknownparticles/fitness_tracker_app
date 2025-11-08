@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:fitness_tracker_app/services/storage_service.dart';
+import 'package:self_discipline_planet/services/storage_service.dart';
 import 'help_page.dart';
 import 'dart:developer' as developer;
 

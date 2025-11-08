@@ -337,4 +337,17 @@ class StorageService {
   Future<void> clearAll() async {
     await _prefs.clear();
   }
+
+  // 引导相关
+  Future<void> markOnboardingShown() async {
+    developer.log('标记引导已显示', name: 'StorageService');
+    await _prefs.setBool('onboarding.shown', true);
+    developer.log('引导标记保存成功', name: 'StorageService');
+  }
+
+  bool hasOnboardingShown() {
+    final shown = _prefs.getBool('onboarding.shown') ?? false;
+    developer.log('引导显示状态: $shown', name: 'StorageService');
+    return shown;
+  }
 }
