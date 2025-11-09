@@ -142,7 +142,7 @@ class DeepSeekService {
           'temperature': 0.7,
         }),
       )
-          .timeout(const Duration(seconds: 10));
+          .timeout(const Duration(seconds: 30)); // 增加超时时间到30秒，适应复杂请求
 
       developer.log('API 响应状态码: ${response.statusCode}', name: 'DeepSeekService');
       developer.log('API 响应内容: ${response.body}', name: 'DeepSeekService');
@@ -429,7 +429,7 @@ class DeepSeekService {
           'temperature': 0.7,
         }),
       )
-          .timeout(const Duration(seconds: 10));
+          .timeout(const Duration(seconds: 20)); // 增加超时时间到20秒，适应分析建议的复杂处理
 
       developer.log('分析建议API响应状态码: ${response.statusCode}', name: 'DeepSeekService');
       developer.log('分析建议API响应内容: ${response.body}', name: 'DeepSeekService');
